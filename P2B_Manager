@@ -1,0 +1,197 @@
+##			OFFER OPTIMIZATION
+##
+##			PROPENSITY TO BUY		
+##			
+##
+##			05/13/2015 -- created useLogger method, print statements now directed to that file
+##				      created sendEmail that is called at the end of main 
+##			05/11/2015 -- added cleanup method, editted SQL Script to check for changes in scores
+##			05/07/2015 -- major overhaul using Chris' suggesstions, more granular methods,
+##				      more generic referencing, better comments
+##			04/30/2015 -- first draft
+
+##DEPENDENCIES
+import csv
+import sys, getopt
+import pyodbc
+import os
+import argparse
+import ConfigParser
+import logging
+from string import Template
+from datetime import date,datetime, time, timedelta
+
+##MEAT AND POTATOES
+def main(gen_args):
+	##Start	
+	retval = 0
+	useLogger('Offer Optimization')
+	useLogger('Script Started')	
+	##Get propertiesLocation and create property Dictionary
+	propLocation = "/home/bgilbert/OfferOpt/oo_properties.ini"	
+	(propertyDict,retval) = config(propLocation)		
+	##Get advertiser data from oo_scheduler_table
+	(oo_advertiser,retval) = executeScript(retval,propertyDict['tpl_scheduler_lookup'],propertyDict,switch='SELECT')
+	##Update oo_scheduler_table to 'RUNNING'
+	(temp,retval) = executeScript(retval,propertyDict['tpl_scheduler_update'],propertyDict,'INSERT',oo_advertiser)
+	##Estimate parameters for both models
+	(temp,retval) = executeScript(retval,propertyDict['tpl_newcust_param'],propertyDict,'INSERT',oo_advertiser)
+	(temp,retval) = executeScript(retval,propertyDict['tpl_currentcust_param'],propertyDict,'INSERT',oo_advertiser)
+	##Score customers for both models
+	(temp,retval) = executeScript(retval,propertyDict['tpl_newcust_score'],propertyDict,'INSERT',oo_advertiser)
+	(temp,retval) = executeScript(retval,propertyDict['tpl_currentcust_score'],propertyDict,'INSERT',oo_advertiser)
+	##Check for changes compared to oo_scoring_log and create CSV
+	(temp,retval) = executeScript(retval,propertyDict['tpl_newcust_exec'],propertyDict,'CSV',oo_advertiser)
+	(temp,retval) = executeScript(retval,propertyDict['tpl_currentcust_exec'],propertyDict,'CSV',oo_advertiser)
+	##Truncate temp tables, update scoring, and change oo_scheduler_table to 'COMPLETE' or 'NEXT'
+	retval = cleanUp(retval,propertyDict,oo_advertiser)
+	##Send email indicating final retval and pathnames
+	sendEmail(retval,oo_advertiser)
+	##End
+	useLogger('Final retval = %s' % retval) 
+	useLogger('OO Script End')	
+	return
+
+	
+def useLogger(string):
+	today = datetime.now().strftime('%Y%m%d')
+	logging.basicConfig(filename = '/home/bgilbert/OfferOpt/Logs/oo_logger_' + today + '.log', level=logging.DEBUG, format='%(asctime)s %(message)s', datefmt='%m/%d/%Y %I:%M:%S ')
+	logging.info(string)
+	return 	
+
+	
+def config(propertiesLocation):
+	propDict = {}
+	try:
+		settings = ConfigParser.ConfigParser()
+		settings.read(propertiesLocation)	
+		for section in settings.sections():
+			for option in settings.options(section):
+				for item in settings.items(section,option):
+					propDict[item[0]] = item[1]
+		retval = 0
+	except IOError as exc:
+		useLogger(str(exc))
+		retval = 1
+		propDict = {}		
+	return (propDict,retval)
+	
+	
+def changeSQL(script,adv_data):
+	dt = date.today()
+	RecentDate_Score = (dt - timedelta(weeks=3)).isoformat()
+	LookBackDate_Score = (dt - timedelta(weeks=55)).isoformat()
+	RecentDate_HoldOut = (dt - timedelta(weeks=7)).isoformat()
+	LookBackDate_HoldOut = (dt - timedelta(weeks=59)).isoformat()	
+	advertiserID = adv_data[0][0] 
+	segment = ''
+	for sgmt in adv_data:
+		segment+=str(sgmt[1])
+		segment+=str(',')
+	segment = segment[:-1]		
+	replaceDict = { 'v_SEGMENT_ID':segment,
+			'v_INSTITUTION_ID':'2726',									
+			'v_ADVERTISER_ID':advertiserID,	
+			'v_DATE_SCORE':LookBackDate_Score,
+			'v_DATE_HOLD':RecentDate_Score,		
+			'v_DATE_START':LookBackDate_HoldOut,
+			'v_DATE_END':RecentDate_HoldOut,
+			'override':'NEXT'}
+	return Template(script).substitute(replaceDict)
+
+	
+def getSQLFiles(sqlNeeded,adv_data):
+	try:
+		with open(sqlNeeded,'r') as inputfile:
+			sql_out = inputfile.read()
+		sql_out = changeSQL(sql_out,adv_data) 
+		retval = 0		
+	except IOError as exc:
+		useLogger(str(exc))
+		retval = 1
+	return (sql_out,retval) 
+	
+
+def getDBConnect(propertyDict):
+	try:
+		connectLoc = "DRIVER={%s};SERVER=%s;DATABASE=%s;UID=%s;PWD=%s" % (propertyDict['driver'],propertyDict['server'],propertyDict['database'],propertyDict['user'],propertyDict['pass'])
+		cnxn = pyodbc.connect(connectLoc)
+		useLogger("DB Connection Made")
+		retval = 0
+	except pyodbc.Error as err:
+		useLogger(str(exc))	
+		retval = 1
+	return(cnxn,retval)	
+
+	
+def executeScript(retval,scriptName,propertyDict,switch,adv_data=[(0,0,0)]):
+	if retval == 0:
+		try:
+			db_out = []
+			if (switch == 'CSV') or (switch == 'SELECT'):
+				(sqlCode,retval) = getSQLFiles(scriptName,adv_data)
+				(connect,retval) = getDBConnect(propertyDict)
+				cursor = connect.cursor()		
+				cursor.execute(sqlCode)		
+				db_out = cursor.fetchall()	
+				if switch == 'CSV':
+					makeCSV(db_out,propertyDict,adv_data)	
+			elif switch == 'INSERT':
+				(sqlCode,retval) = getSQLFiles(scriptName,adv_data)
+				(connect,retval) = getDBConnect(propertyDict)
+				cursor = connect.cursor()		
+				cursor.execute(sqlCode)
+				connect.commit()
+		except pyodbc.Error as err:
+			useLogger(str(exc))	
+			retval = 1
+	elif retval == 1:
+		useLogger("Execute script failed on %s, retval == 1" % scriptName)
+	return (db_out,retval)
+	
+
+def makeCSV(data_input,propertyDict,adv_data):
+	dt = date.today()	
+	outname = propertyDict['outputlocation'] + "_" + str(adv_data[0][0]) + "_" + dt.strftime("%Y%m%d") +".csv"
+	out = open(outname,'w')	
+	for row in data_input:
+		line = str(row)
+		line = line.translate(None,'()L')
+		out.write(line + "\n")
+	out.close()
+	return
+
+
+def cleanUp(retval, propDict,adv_data):
+	if retval == 0:
+		executeScript(retval,propDict['tpl_cleanup_success'],propDict,'INSERT',adv_data)
+	else:
+		retval = 0
+		executeScript(retval,propDict['tpl_cleanup_failure'],propDict,'INSERT',adv_data)
+		retval = 1
+	useLogger("Clean Up Complete")
+	return retval
+
+
+def sendEmail(retval,adv_data):
+	address_book = ###
+	msg = MIMEMultipart()    
+	sender = ###
+	subject = "Offer Optimization for %s: Final Retval = %s" % (str(adv_data[0][0]),retval)
+	body = '''Check CSVs at /home/bgilbert/OfferOpt/Score/
+Check Logs at /home/bgilbert/OfferOpt/Logs/
+Clean -Completed- Entries in the oo_job_schedule table'''
+	msg['From'] = sender
+	msg['To'] = ','.join(address_book)
+	msg['Subject'] = subject
+	msg.attach(MIMEText(body, 'plain'))
+	text=msg.as_string()
+	s = smtplib.SMTP('mail.cardlytics.com')
+	s.sendmail(sender,address_book, text)
+	s.quit()
+	return 	
+
+	
+if __name__ == "__main__":
+	main(sys.argv)	
+	sys.exit()
