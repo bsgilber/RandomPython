@@ -1,0 +1,68 @@
+import urllib2
+import smtplib
+import os
+import random
+from email.mime.text import MIMEText
+from email.mime.image import MIMEImage
+from email.mime.multipart import MIMEMultipart
+from bs4 import BeautifulSoup
+from datetime import date,datetime, time, timedelta
+from urllib2 import urlopen
+
+def getImageLocation(site):
+	u = '/u/gauss1122'
+	hdr = {'User-Agent' : u}
+	url = site
+	req = urllib2.Request(url,headers=hdr)
+	html = urllib2.urlopen(url)
+	soup = BeautifulSoup(html)
+	imgs = soup.findAll('a',href=True)
+	imgList = []
+	for img in imgs:
+		imgList.append(img['href'])
+	imgr = [item for item in imgList if 'imgur' in item]
+	imgr = [item for item in imgr if 'domain' not in item]
+	imgLoc = str(imgr[6]).encode("utf-8")
+	imgLoc = imgLoc.replace("imgur","i.imgur") + ".jpg"
+	imgReq = urllib2.Request(imgLoc,headers=hdr)
+	imgData = urlopen(imgReq)
+	return imgData
+
+
+def main(site):
+	imgur = getImageLocation(site)
+	today = datetime.now().strftime('%Y%m%d')
+	filename = "C:\\Users\\bgilbert\\Desktop\\PyImage\\CutePic_" + today + ".jpg"
+	saveImage = open(filename,'wb')
+	saveImage.write(imgur.read())
+	saveImage.close()
+	sendEmail(filename)
+	return
+
+
+def sendEmail(imageFile):
+	filename = imageFile
+	img_data = open(filename, 'rb').read()
+	address_book = ####
+	sender = ####
+	subject = "Daily Pic from your favorite Joo"
+	body = '''
+###
+	user = ####
+	pwd =  ####
+	msg = MIMEMultipart()   
+	msg['From'] = sender
+	msg['To'] = ','.join(address_book)
+	msg['Subject'] = subject
+	msg.attach(MIMEText(body, 'plain'))
+	msg.attach(MIMEImage(img_data, 'jpeg', name=os.path.basename(filename)))
+	s = smtplib.SMTP('smtp.gmail.com:587')
+	s.ehlo()
+	s.starttls()
+	s.login(user,pwd)
+	s.sendmail(sender,address_book, msg.as_string())
+	s.close()
+	return 
+
+
+main("http://www.reddit.com/r/aww")
