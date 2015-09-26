@@ -1,0 +1,23 @@
+def importFile(fileLocation, delim = '|'):
+	outFile = []
+	with open(fileLocation, 'r') as file:
+		for i in file:
+			fields = i.split(delim)
+			outFile.append(fields)
+
+def geoLookUp(geoInc, geoData):
+	(city,state,zip) = geoInc
+	if city:
+		for line in geoData:
+			if line[0] == city:
+				state = line[1]
+				break
+	elif zip:
+		for line in geoData:
+			if line[2] == zip:
+				state = line[1]
+				city = line[0]
+				break
+	else:
+		pass
+	return [city,state,zip]
