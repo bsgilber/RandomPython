@@ -1,0 +1,86 @@
+import string
+import csv
+import numpy
+from math import exp
+from collections import Counter as mset
+
+string1 = 'withdrawal debit card k-mrt #14544 ch. nc  clpid: di1085'
+
+def main(transString):
+	refString = getFiles()
+	transList = cleanString(transString)
+	refList = cleanString(refString)
+	trimmedDict = trimList(transList, refList)
+	outDict = {}
+	for pair in trimmedDict:
+		w1 = pair[0]
+		w2 = pair[1]
+		dist = levenshtein(w1,w2)
+		outDict[pair] = dist
+	min_keys = sorted(outDict, key=outDict.__getitem__)
+	print min_keys[1:50]
+
+def getFiles():
+	with open("C:/Users/bgilbert/Desktop/Cleaning/ParentName.csv","r") as csvfile:
+		parentFile = csvfile.read()	
+	#bigFile = read.csv("C:/Users/bgilbert/Desktop/Cleaning/CleaningTest.csv", "r")
+	return parentFile
+	
+def cleanString(dirtyString):
+	dirtyString = dirtyString.lower()
+	dirtyString = ''.join(ltr for ltr in dirtyString if ltr.isalpha() or ltr.isspace())
+	dirtyList = dirtyString.split()
+	delList = ['withdrawal','nc','nj','credit','debit','card','di','ch','clpid']
+	for i in delList:
+		if i in dirtyList:
+			dirtyList.remove(i)
+	cleanList = dirtyList
+	return cleanList
+
+def trimList(shortList, longList):
+	output = []
+	for str1 in shortList:
+		for str2 in longList:
+			if str1[0] == str2[0]:
+				pair = (str1,str2)
+				output += [pair]
+			else:
+				pass
+	return output
+
+def levenshtein(s1, s2):
+	commonLetters = len(list((mset(s1) & mset(s2)).elements()))
+	if len(s1) < len(s2):
+		return levenshtein(s2, s1)
+	if len(s2) == 0:
+		return len(s1) 
+	previous_row = range(len(s2) + 1)
+	for i, c1 in enumerate(s1):
+		current_row = [i + 1]
+		for j, c2 in enumerate(s2):
+			insertions = previous_row[j + 1] + 1
+			deletions = current_row[j] + 1
+			substitutions = previous_row[j] + (c1 != c2)
+			current_row.append(min(insertions, deletions, substitutions))
+		previous_row = current_row
+		#-(commonLetters))*(1/(exp(len(max(s1,s2)))+1)))
+	return 1-(previous_row[-1]/len(max(s1,s2)))
+	
+	
+###
+def longest_common_substring(s1, s2):
+        m = [[0] * (1 + len(s2)) for i in xrange(1 + len(s1))]
+        longest, x_longest = 0, 0
+        for x in xrange(1, 1 + len(s1)):
+                for y in xrange(1, 1 + len(s2)):
+                        if s1[x - 1] == s2[y - 1]:
+                                m[x][y] = m[x - 1][y - 1] + 1
+                                if m[x][y] > longest:
+                                        longest = m[x][y]
+                                        x_longest = x
+                        else:
+                                m[x][y] = 0
+        return s1[x_longest - longest: x_longest]	
+###
+	
+main(string1)
